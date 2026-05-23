@@ -47,53 +47,59 @@ Stack: FastAPI · Python 3.11 · React 18 · Vite 5 · `emergentintegrations`
   Index Agent, Signal Agent (incl. wow violations heuristic), Orchestrator + question
   classifier, real /index and /chat with Gemini.
 
-### Phase 5 — React Frontend (this session — 2026-01-23)
+### Phase 5 — React Frontend (2026-01-23)
 - ✅ Cloned user's repo into `/app` with `.git` preserved so changes can be pushed to
   `origin = github.com/productbyhimanshu/Repochat.git`.
 - ✅ Adapted backend to Emergent supervisor: renamed `main.py → server.py`, moved all routes
   under `/api`, kept session-store shape locked.
 - ✅ Swapped LLM provider per user choice: **Gemini via OpenRouter → Claude Sonnet 4.5 via
   Emergent Universal Key** (`/app/backend/llm/llm_client.py`).
-- ✅ Frontend rebuilt with editorial dark aesthetic:
-  - Fonts: Instrument Serif (display) · Manrope (body) · JetBrains Mono (code)
-  - Palette: warm dark with `#ff7a47` accent and gold/sage/violet semantic colours
-  - Grain texture overlay, shimmering "wow" violation banner, micro-animations on hover
-  - Three states: `idle → loading → brief_ready`
-  - Loading view shows the 4 parallel-agent steps progressing
-  - AutoBrief renders ALWAYS above Chat (architecture invariant verified)
-  - AutoBrief: architecture · core modules (clickable to GitHub) · hidden signals
-    (violation gets a "wow banner") · unused data
-  - Chat: suggested prompt chips, markdown answers (react-markdown + remark-gfm), source
-    chips that link to files on GitHub, sticky composer
-  - `data-testid` on every interactive + critical element
-- ✅ Frontend env wired to `REACT_APP_BACKEND_URL` via Vite `define`.
-- ✅ Fixed 422 error normalisation (`api.js`) so Pydantic validator messages show as
-  human text instead of `[object Object]`.
+- ✅ Frontend rebuilt with editorial dark aesthetic (Instrument Serif · Manrope · JetBrains
+  Mono · warm orange `#ff7a47`, grain overlay, micro-animations).
+- ✅ Three states: `idle → loading → brief_ready`; AutoBrief renders ALWAYS above Chat.
+- ✅ AutoBrief: architecture · core modules · hidden signals (violation wow banner) ·
+  unused data.
+- ✅ Chat: suggested prompts, markdown answers, source chips that link to files on GitHub.
+- ✅ `data-testid` on every interactive element.
+- ✅ Fixed 422 error normalisation in `api.js` (no more `[object Object]`).
 
-### Testing (iteration 1)
-- Backend: **11/11 pytest tests pass** (health, /api/index valid+invalid, /api/chat
-  unknown session, empty question, 5 classifier kinds all returning answers + sources).
-- Frontend: full end-to-end flow validated on the public preview URL; AutoBrief renders
-  before Chat (verified via `compareDocumentPosition`); all 1-shot bugs from the testing
-  agent's report were addressed.
+### Phase 6 — Polish + Counter (2026-01-23)
+- ✅ **ErrorBoundary** wraps the app in `main.jsx` — no more blank screen on render errors.
+- ✅ **RepoSizeBanner** appears in the brief when `repo_meta.total_files > 200`.
+- ✅ **`/api/stats`** endpoint + persistent counter at `/app/backend/state/counter.json`
+  with thread-safe atomic writes.
+- ✅ **StatsCounter chip** on the landing page ("X repos understood") — shareability hook.
+- ✅ Counter increments only on a successful `/api/index`; 422-invalid URLs do not bump it.
+- ✅ Migrated FastAPI `@app.on_event` startup/shutdown → **lifespan context manager**.
+- ✅ `default_branch` detection: `mcp/github_client.get_file_tree` writes it to `repo_meta`,
+  frontend `fileUrl()` uses it (so commander.js links resolve to `/blob/master/...` instead
+  of `/blob/HEAD/...`).
+- ✅ `repo_meta.total_files` populated by index_agent so the banner has data to react to.
 
-## Prioritized Backlog (Phase 6 polish — not done in this session)
+### Testing
+- Iteration 1 (Phase 5): backend 11/11 pass, frontend ~95% (one minor 422-display bug fixed).
+- Iteration 2 (Phase 6): backend 11/11 pass, frontend 100% on tested flows, zero new bugs.
+  Verified live: `stats-counter` shows numeric count, `repo-size-banner` shows '223 files',
+  module hrefs use `/blob/master/`, ErrorBoundary invisible on happy path.
+
+## Prioritized Backlog
 
 ### P0
-- *None.* Phase 5 ships with all acceptance tests green.
+- *None.* MVP + Phase 6 polish + counter all shipped & tested.
 
 ### P1
-- Phase 6 demo prep on `expressjs/express` to confirm the "outlier bypasses dominant
-  pattern" violation lands cleanly in the wow banner.
-- Switch FastAPI startup events from deprecated `@app.on_event` to the lifespan
-  context manager.
-- Detect repo's default branch in `fileUrl()` instead of hard-coding `HEAD`.
+- Final demo runs on `expressjs/express` + `fastapi/fastapi` to confirm the "outlier
+  bypasses dominant pattern" wow violation lands cleanly.
+- Move AutoBrief.jsx's `useMemo` calls above the early `return null` for stricter
+  rules-of-hooks compliance (currently tolerated).
+- If we ever switch to multi-worker uvicorn, replace `threading.Lock` in `stats.py` with
+  `fcntl` file-locking or move the counter into the in-memory session store.
 
 ### P2
-- Add a small "what would I add a feature here?" question template to the chat prompts.
-- Show a session-history sidebar so the user can return to old briefs.
 - Streamed LLM responses for the chat panel.
 - Per-request progress polling so the Loading view reflects real backend state.
+- Session-history sidebar (revisit old briefs).
+- "Where would I add this feature?" suggested chat prompt.
 
 ## How to push back to origin
 The user owns the repo. `.git` in `/app` already points to
