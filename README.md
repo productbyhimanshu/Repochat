@@ -1,72 +1,137 @@
-# Repochat
+# RepoChat
 
-**Repochat** is an AI-powered GitHub repository chat and QA tool. By simply pasting a public GitHub repository URL, Repochat analyzes the repository's architecture, dependencies, and code signals to generate an instant briefing, followed by a conversational interface to dive deep into the codebase.
+**RepoChat** is a codebase comprehension layer for the AI coding era. Paste any public GitHub URL — before you ask a single question, RepoChat automatically analyzes the repository and generates a plain-English brief explaining how the system is structured, which modules matter most, where architectural drift exists, and what hidden risks are accumulating.
 
-## 🚀 Features
+> **Core insight:** AI made development cheap. Clarity became expensive. RepoChat restores it.
 
-- **Instant Auto-Brief**: Automatically generates a 4-section summary of any repository:
-  1. Architecture summary
-  2. Core modules (extracted via centrality scoring)
-  3. Hidden signals (TODOs, commit churn, unused fields, and architectural violations)
-  4. Unused data detection
-- **Intelligent Indexing**: Calculates a `centrality score` based on the dependency graph (`import_count + referenced_by_count`) to identify the most critical files in a project.
-- **GitHub MCP Integration**: Uses the `@modelcontextprotocol/server-github` to directly interact with GitHub (file tree, code search, commit history) and safely caches every response.
-- **Gemini-Powered Q&A**: Employs `gemini-2.0-flash-lite` wrapped inside a robust 15 RPM Rate Queue that automatically handles 429 backoffs.
+## Status
 
-## 🏗 Architecture
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | FastAPI skeleton, session store, React stubs | ✅ Complete |
+| Phase 2 | GitHub REST client, 15 RPM rate queue, LLM client | ✅ Complete |
+| Phase 3 | Index Agent, Signal Agent | ✅ Complete |
+| Phase 4 | Orchestrator, question classifier, real brief generation | ✅ Complete |
+| Phase 5 | React frontend (URL input → auto-brief → chat) | ⏳ Next |
+| Phase 6 | Polish, error handling, demo prep | ⏳ Upcoming |
 
-**Stack**:
-- **Frontend**: React + Vite (State machine: idle → loading → brief_ready)
-- **Backend**: FastAPI (Python)
-- **AI/LLM**: Google Gemini (`gemini-2.0-flash-lite`)
-- **Integration**: GitHub Model Context Protocol (MCP) Server
+## What It Does
 
-**Core Agents**:
-1. **Orchestrator**: Routes user questions to appropriate contexts (architecture, flow, drift, signal, module).
-2. **Index Agent**: Parses the file tree, builds the dependency graph, calculates centrality, and stores the top 8 core modules.
-3. **Signal Agent**: Performs heuristic searches to detect technical debt, TODOs, and architectural violations (the "Wow" signal).
+1. **Paste a GitHub URL** — any public repo
+2. **Auto-Brief appears** — 4 sections generated before you ask anything:
+   - Architecture summary (how the system is built)
+   - Core modules (top 8 files by centrality score)
+   - Hidden signals (violations, TODO clusters, high-churn files)
+   - Unused data (schema fields defined but never referenced)
+3. **Ask questions** — conversational Q&A with source citations:
+   - *"How is this architecture structured?"* → architecture mode
+   - *"How does a request flow through the system?"* → flow mode
+   - *"What changed recently?"* → drift mode
+   - *"What are the TODOs and hidden risks?"* → signal mode
+   - *"What does middleware.js do?"* → module mode
 
-## 🏁 Current Status
+## Architecture
 
-- **Phase 1 (Foundation)**: Complete ✅ (FastAPI skeleton, React stubs, rigid session store shape)
-- **Phase 2 (GitHub MCP + LLM)**: Complete ✅ (MCP tools, 15 RPM Rate Queue, Gemini Client)
-- **Phase 3 (Agents)**: Complete ✅ (Index Agent & Signal Agent operational)
-- **Phase 4 (Orchestrator)**: In Progress ⏳
-- **Phase 5 (React UI)**: Not started
-- **Phase 6 (Polish)**: Not started
+```
+React (Vite) · localhost:3000
+      ↓ HTTP
+FastAPI · localhost:8000
+      ↓
+Orchestrator          ← only node that calls LLM
+      ↓ asyncio.gather
+Index Agent    Signal Agent
+      ↓               ↓
+      └── GitHub REST API ──┘
+               ↓
+    Gemini 2.0 Flash Lite (via OpenRouter)
+               ↓
+       Rate Limit Queue (15 RPM)
+```
 
-## 🛠 Setup & Development
+**Agent responsibilities:**
 
-1. Clone the repository and install backend dependencies:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
+| Agent | Does | Does not |
+|-------|------|----------|
+| Orchestrator | dispatches agents, classifies questions, calls LLM, builds brief | call GitHub directly |
+| Index Agent | file tree, dep graph, centrality scoring, top 8 files | call LLM |
+| Signal Agent | TODOs, commit churn, unused fields, arch violations | call LLM |
+| GitHub client | all REST API calls, caches results immediately | contain business logic |
+| Rate Queue | 15 RPM guard, retry on 429, exponential backoff | know about agents |
 
-2. Install the GitHub MCP Server globally:
-   ```bash
-   npm install -g @modelcontextprotocol/server-github
-   ```
+**Question classifier** (keyword-based, no LLM cost):
+- `architecture` → pulls `brief.architecture` + `core_modules`
+- `flow` → pulls `indexed_files` + dependency graph
+- `drift` → pulls `signals.violations` + `signals.churn`
+- `signal` → pulls `signals.todos` + `signals.unused_fields`
+- `module` → pulls `indexed_files[file]` + dep graph
 
-3. Configure your `.env` file:
-   ```env
-   GITHUB_TOKEN=ghp_your_github_token
-   GEMINI_API_KEY=AIza...your_gemini_key
-   ```
+## Stack
 
-4. Start the backend:
-   ```bash
-   cd backend
-   uvicorn main:app --reload
-   ```
+- **Backend:** FastAPI + Python 3.11
+- **Frontend:** React + Vite
+- **LLM:** Gemini 2.0 Flash Lite via OpenRouter
+- **GitHub data:** GitHub REST API v3 (authenticated, 5000 req/hour)
+- **Session store:** In-memory Python dict (no database)
 
-5. Start the frontend:
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
+## Setup
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- A GitHub personal access token (`public_repo` scope)
+- An OpenRouter API key (free tier available at openrouter.ai)
+
+### Backend
+
+```bash
+# From project root
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env and add your keys:
+#   GITHUB_TOKEN=ghp_...
+#   OPENROUTER_API_KEY=sk-or-v1-...
+
+# Start the server (run from backend/ directory)
+cd backend
+uvicorn main:app --reload --port 8000
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+# Runs at localhost:3000
+```
+
+### Test the API directly
+
+```bash
+# Index a repo
+curl -X POST http://localhost:8000/index \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://github.com/expressjs/express"}'
+
+# Chat (use session_id from above response)
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "...", "question": "How is this architecture structured?"}'
+```
+
+## Hard Rules (never break)
+
+- Only `orchestrator.py` calls the LLM
+- Only `mcp/github_client.py` calls GitHub
+- Cache every GitHub fetch to session store — never fetch the same file twice
+- No database — session store is a Python dict
+- No vector DB, no embeddings
+- No auth — public repos only
+- Rate queue is mandatory on every LLM call
 
 ---
-*Developed by Himanshu.*
+
+*Built by [Himanshu](https://github.com/productbyhimanshu)*

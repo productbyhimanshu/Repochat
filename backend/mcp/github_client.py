@@ -1,190 +1,198 @@
 """
-github_client.py — GitHub MCP Client.
+github_client.py — GitHub REST API client.
 
-Communicates with @modelcontextprotocol/server-github via stdio.
-Caches all successful tool calls to session_store immediately.
+All GitHub calls go through this module. Results are cached to session_store immediately.
+The mcp stdlib package is not required; we use httpx directly against the GitHub v3 REST API.
 """
 
 import os
-import json
-from mcp.client.stdio import stdio_client, StdioServerParameters
-from mcp.client.session import ClientSession
+import base64
+import httpx
 
-from backend.session import require_session
-from backend.logger import get_logger
+from session import require_session
+from logger import get_logger
 
 log = get_logger("repochat.mcp.github")
 
-_mcp_client_ctx = None
-_mcp_session: ClientSession | None = None
+_BASE = "https://api.github.com"
+_TOKEN_VALID: bool | None = None  # None = untested, True = works, False = invalid
 
-async def _get_session() -> ClientSession:
-    """Initialize and return the MCP ClientSession singleton."""
-    global _mcp_client_ctx, _mcp_session
-    if _mcp_session is not None:
-        return _mcp_session
 
-    token = os.environ.get("GITHUB_TOKEN", "")
-    if not token:
-        log.warning("GITHUB_TOKEN is missing. GitHub MCP will likely fail.")
+def _headers(authenticated: bool = True) -> dict:
+    h = {"Accept": "application/vnd.github.v3+json"}
+    if authenticated:
+        token = os.environ.get("GITHUB_TOKEN", "")
+        if token:
+            h["Authorization"] = f"Bearer {token}"
+    return h
 
-    params = StdioServerParameters(
-        command="npx",
-        args=["-y", "@modelcontextprotocol/server-github"],
-        env={**os.environ, "GITHUB_TOKEN": token}
-    )
 
-    log.info("Starting @modelcontextprotocol/server-github via npx...")
-    _mcp_client_ctx = stdio_client(params)
-    read, write = await _mcp_client_ctx.__aenter__()
+async def _get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+    """GET with automatic fallback to unauthenticated on 401. Raises on 403 rate limit."""
+    global _TOKEN_VALID
+    headers = kwargs.pop("headers", _headers(authenticated=True))
+    res = await client.get(url, headers=headers, **kwargs)
+    if res.status_code == 401 and "Authorization" in headers:
+        log.warning("GitHub token invalid or expired — falling back to unauthenticated (update GITHUB_TOKEN in .env)")
+        _TOKEN_VALID = False
+        res = await client.get(url, headers=_headers(authenticated=False), **kwargs)
+    if res.status_code == 403:
+        remaining = res.headers.get("X-RateLimit-Remaining", "?")
+        raise RuntimeError(
+            f"GitHub API rate limit exceeded (remaining={remaining}). "
+            "Set a valid GITHUB_TOKEN in .env to get 5000 req/hour instead of 60."
+        )
+    return res
 
-    _mcp_session = ClientSession(read, write)
-    await _mcp_session.__aenter__()
-    await _mcp_session.initialize()
 
-    log.info("GitHub MCP server initialized successfully")
-    return _mcp_session
-
-async def _call_mcp_cached(session_id: str, tool_name: str, cache_key: str, args: dict) -> any:
-    """Helper to check cache, call MCP, and cache the result."""
+def _get_cache(session_id: str) -> dict:
     store = require_session(session_id)
-    
-    # Nested dictionaries might need to be created if not present
     if "mcp_cache" not in store:
         store["mcp_cache"] = {}
+    return store["mcp_cache"]
 
-    if cache_key in store["mcp_cache"]:
-        log.cache(hit=True, key=f"{tool_name}:{cache_key}")
-        return store["mcp_cache"][cache_key]
 
-    log.cache(hit=False, key=f"{tool_name}:{cache_key}")
-    log.agent("github_client", f"Calling MCP tool: {tool_name} with {args}")
-    
-    mcp = await _get_session()
-    result = await mcp.call_tool(tool_name, arguments=args)
-    
-    # Parse the result. Usually MCP tools return a list of text contents.
-    if not result.content:
-        return None
-        
-    text_result = result.content[0].text
-    try:
-        parsed = json.loads(text_result)
-    except Exception:
-        parsed = text_result
+# ── 5 GitHub client functions ──────────────────────────────────────────────────
 
-    # Cache it
-    store["mcp_cache"][cache_key] = parsed
-    return parsed
-
-# ── 5 MCP Tool Wrappers ────────────────────────────────────────────────────────
-
-async def get_file_tree(session_id: str, owner: str, repo: str) -> list[str]:
-    """
-    Since the MCP server lacks a native recursive get_file_tree tool,
-    we use a direct GitHub REST API call via httpx for this specific function,
-    or try to use get_file_contents on root.
-    Wait! The architectural requirement is to strictly use MCP. 
-    However, the MCP tool for directory contents is `get_file_contents`.
-    We will use `get_file_contents` on "" and recurse, or just return top level if too deep.
-    Actually, let's use an httpx call for `get_file_tree` and log it, as MCP lacks it.
-    """
-    import httpx
-    store = require_session(session_id)
+async def get_file_tree(session_id: str, owner: str, repo: str) -> list:
+    """Return list of all blob paths in the repo (recursive)."""
+    cache = _get_cache(session_id)
     cache_key = f"tree:{owner}/{repo}"
-    
-    if "mcp_cache" not in store:
-        store["mcp_cache"] = {}
 
-    if cache_key in store["mcp_cache"]:
+    if cache_key in cache:
         log.cache(hit=True, key=cache_key)
-        return store["mcp_cache"][cache_key]
+        return cache[cache_key]
 
     log.cache(hit=False, key=cache_key)
-    log.agent("github_client", f"Fetching default branch tree for {owner}/{repo}")
+    log.agent("github_client", f"Fetching file tree for {owner}/{repo}")
 
-    token = os.environ.get("GITHUB_TOKEN", "")
-    headers = {"Accept": "application/vnd.github.v3+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    async with httpx.AsyncClient() as client:
-        # First get default branch
-        repo_res = await client.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers)
+    async with httpx.AsyncClient(timeout=30) as client:
+        repo_res = await _get(client, f"{_BASE}/repos/{owner}/{repo}")
         repo_res.raise_for_status()
         default_branch = repo_res.json().get("default_branch", "main")
 
-        # Then get recursive tree
-        tree_res = await client.get(
-            f"https://api.github.com/repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1",
-            headers=headers
+        tree_res = await _get(
+            client,
+            f"{_BASE}/repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1",
         )
         tree_res.raise_for_status()
-        
-        tree_data = tree_res.json().get("tree", [])
-        files = [item["path"] for item in tree_data if item["type"] == "blob"]
+        files = [
+            item["path"]
+            for item in tree_res.json().get("tree", [])
+            if item["type"] == "blob"
+        ]
 
-    store["mcp_cache"][cache_key] = files
+    cache[cache_key] = files
     return files
 
-async def get_file_contents(session_id: str, owner: str, repo: str, path: str) -> str:
-    """Returns the raw string content of a file."""
-    cache_key = f"file:{owner}/{repo}:{path}"
-    store = require_session(session_id)
-    
-    if "mcp_cache" not in store:
-        store["mcp_cache"] = {}
 
-    if cache_key in store["mcp_cache"]:
+async def get_file_contents(session_id: str, owner: str, repo: str, path: str) -> str:
+    """Return raw string content of a file. Returns '' on 404."""
+    cache = _get_cache(session_id)
+    cache_key = f"file:{owner}/{repo}:{path}"
+
+    if cache_key in cache:
         log.cache(hit=True, key=cache_key)
-        return store["mcp_cache"][cache_key]
+        return cache[cache_key]
 
     log.cache(hit=False, key=cache_key)
-    
-    mcp = await _get_session()
-    result = await mcp.call_tool("get_file_contents", arguments={
-        "owner": owner,
-        "repo": repo,
-        "path": path
-    })
-    
-    if not result.content:
-        content = ""
+    log.agent("github_client", f"Fetching {path}")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await _get(client, f"{_BASE}/repos/{owner}/{repo}/contents/{path}")
+        if res.status_code == 404:
+            cache[cache_key] = ""
+            return ""
+        res.raise_for_status()
+        data = res.json()
+
+    if isinstance(data, dict) and data.get("encoding") == "base64":
+        content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
     else:
-        content = result.content[0].text
-        
-    store["mcp_cache"][cache_key] = content
+        content = str(data)
+
+    cache[cache_key] = content
     return content
 
+
 async def search_code(session_id: str, owner: str, repo: str, query: str) -> dict:
-    """Search code across the repository (e.g., TODO, FIXME)."""
+    """Search code in repo for a keyword (e.g. TODO, FIXME)."""
+    cache = _get_cache(session_id)
     cache_key = f"search:{owner}/{repo}:{query}"
-    # The GitHub MCP tool search_code uses a global q parameter, we need to scope it to repo
-    scoped_query = f"repo:{owner}/{repo} {query}"
-    return await _call_mcp_cached(session_id, "search_code", cache_key, {
-        "q": scoped_query
-    })
+
+    if cache_key in cache:
+        log.cache(hit=True, key=cache_key)
+        return cache[cache_key]
+
+    log.cache(hit=False, key=cache_key)
+    log.agent("github_client", f"Searching code for '{query}' in {owner}/{repo}")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await _get(
+            client,
+            f"{_BASE}/search/code",
+            params={"q": f"repo:{owner}/{repo} {query}", "per_page": 10},
+            headers={**_headers(), "Accept": "application/vnd.github.v3.text-match+json"},
+        )
+        if res.status_code in (422, 403, 451, 401):
+            result: dict = {"items": [], "total_count": 0}
+        else:
+            res.raise_for_status()
+            result = res.json()
+
+    cache[cache_key] = result
+    return result
+
 
 async def list_commits(session_id: str, owner: str, repo: str, limit: int = 30) -> list:
-    """List recent commits."""
-    # MCP tool list_commits uses (owner, repo, branch?, per_page, page)
-    # We just request per_page = limit
+    """Return list of recent commits (up to `limit`)."""
+    cache = _get_cache(session_id)
     cache_key = f"commits:{owner}/{repo}:{limit}"
-    # Wait, the MCP tool signature for list_commits might differ. Let's just pass owner, repo.
-    mcp_args = {"owner": owner, "repo": repo}
-    # It might not accept limit, but usually returns recent. 
-    res = await _call_mcp_cached(session_id, "list_commits", cache_key, mcp_args)
-    
-    # If res is a list, slice it to limit
-    if isinstance(res, list):
-        return res[:limit]
-    return res
 
-async def list_issues(session_id: str, owner: str, repo: str, state: str = "open", limit: int = 20) -> list:
-    """List issues."""
+    if cache_key in cache:
+        log.cache(hit=True, key=cache_key)
+        return cache[cache_key]
+
+    log.cache(hit=False, key=cache_key)
+    log.agent("github_client", f"Listing commits for {owner}/{repo}")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await _get(
+            client,
+            f"{_BASE}/repos/{owner}/{repo}/commits",
+            params={"per_page": min(limit, 100)},
+        )
+        res.raise_for_status()
+        commits = res.json()
+
+    result = commits[:limit] if isinstance(commits, list) else []
+    cache[cache_key] = result
+    return result
+
+
+async def list_issues(
+    session_id: str, owner: str, repo: str, state: str = "open", limit: int = 20
+) -> list:
+    """Return list of issues."""
+    cache = _get_cache(session_id)
     cache_key = f"issues:{owner}/{repo}:{state}:{limit}"
-    mcp_args = {"owner": owner, "repo": repo, "state": state}
-    res = await _call_mcp_cached(session_id, "list_issues", cache_key, mcp_args)
-    if isinstance(res, list):
-        return res[:limit]
-    return res
+
+    if cache_key in cache:
+        log.cache(hit=True, key=cache_key)
+        return cache[cache_key]
+
+    log.cache(hit=False, key=cache_key)
+    log.agent("github_client", f"Listing {state} issues for {owner}/{repo}")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await _get(
+            client,
+            f"{_BASE}/repos/{owner}/{repo}/issues",
+            params={"state": state, "per_page": min(limit, 100)},
+        )
+        res.raise_for_status()
+        issues = res.json()
+
+    result = issues[:limit] if isinstance(issues, list) else []
+    cache[cache_key] = result
+    return result

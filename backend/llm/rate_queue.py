@@ -8,7 +8,7 @@ and retries on HTTP 429 ResourceExhausted with exponential backoff.
 import time
 import asyncio
 from typing import Callable, Any
-from backend.logger import get_logger
+from logger import get_logger
 
 log = get_logger("repochat.llm.rate_queue")
 
