@@ -15,7 +15,13 @@ async function postJSON(path, body) {
     let detail = `Server error ${res.status}`;
     try {
       const data = await res.json();
-      detail = data.detail || detail;
+      if (Array.isArray(data?.detail)) {
+        detail = data.detail.map((e) => e?.msg || JSON.stringify(e)).join("; ");
+      } else if (typeof data?.detail === "string") {
+        detail = data.detail;
+      } else if (data?.detail) {
+        detail = JSON.stringify(data.detail);
+      }
     } catch {
       /* ignore */
     }
