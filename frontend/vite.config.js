@@ -1,15 +1,21 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: {
-      // Proxy /index and /chat to FastAPI backend
-      "/index": "http://localhost:8000",
-      "/chat":  "http://localhost:8000",
-      "/health": "http://localhost:8000",
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  return {
+    plugins: [react()],
+    server: {
+      host: "0.0.0.0",
+      port: 3000,
+      strictPort: true,
+      hmr: {
+        clientPort: env.WDS_SOCKET_PORT ? Number(env.WDS_SOCKET_PORT) : 443,
+      },
+      allowedHosts: true,
     },
-  },
+    define: {
+      "process.env.REACT_APP_BACKEND_URL": JSON.stringify(env.REACT_APP_BACKEND_URL || ""),
+    },
+  };
 });

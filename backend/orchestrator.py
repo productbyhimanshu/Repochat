@@ -11,7 +11,7 @@ import asyncio
 import json
 
 from agents import index_agent, signal_agent
-from llm.gemini_client import generate
+from llm.llm_client import generate
 from session import require_session
 from logger import get_logger
 

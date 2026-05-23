@@ -1,151 +1,160 @@
 /**
- * Chat.jsx — Conversational Q&A interface.
+ * Chat.jsx — Conversational Q&A panel, always rendered BELOW AutoBrief.
  *
- * Phase 1 stub: sends questions to POST /chat,
- * renders mock answers below AutoBrief.
- * Full design and streaming in Phase 5.
+ * Features:
+ *   - Suggested prompts (architecture / flow / drift / signal / module)
+ *   - Markdown answers via react-markdown
+ *   - Source chips link directly to files on GitHub
+ *   - Disables input while a question is in-flight
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Send, MessageSquareText } from "lucide-react";
+import { api, fileUrl } from "../lib/api.js";
 
-export default function Chat({ sessionId }) {
-  const [question, setQuestion]   = useState("");
-  const [messages, setMessages]   = useState([]);
-  const [loading,  setLoading]    = useState(false);
-  const [error,    setError]      = useState(null);
+const SUGGESTED = [
+  { q: "How is this architecture structured?",           tag: "architecture" },
+  { q: "How does a request flow through the system?",    tag: "flow" },
+  { q: "What changed recently? Where is the drift?",     tag: "drift" },
+  { q: "What TODOs and hidden risks exist?",             tag: "signal" },
+];
 
-  async function handleAsk(e) {
-    e.preventDefault();
-    const q = question.trim();
-    if (!q || loading) return;
+export default function Chat({ sessionId, repoMeta }) {
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
+  const streamRef = useRef(null);
 
-    setMessages(prev => [...prev, { role: "user", text: q }]);
+  useEffect(() => {
+    if (streamRef.current) {
+      streamRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [messages, loading]);
+
+  async function ask(q) {
+    if (!q.trim() || loading || !sessionId) return;
+    setMessages((m) => [...m, { role: "user", text: q }]);
     setQuestion("");
     setLoading(true);
     setError(null);
-
     try {
-      const res = await fetch("/chat", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ session_id: sessionId, question: q }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || `Server error ${res.status}`);
-      }
-
-      const data = await res.json();
-      setMessages(prev => [...prev, {
-        role:    "assistant",
-        text:    data.answer,
-        sources: data.sources || [],
-      }]);
+      const data = await api.chat(sessionId, q);
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: data.answer || "(no answer)", sources: data.sources || [] },
+      ]);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Chat failed");
     } finally {
       setLoading(false);
     }
   }
 
-  return (
-    <div id="chat-panel">
-      <h2 style={{ fontSize: 18, color: "#e6edf3", marginBottom: 16 }}>Ask a question</h2>
+  function handleSubmit(e) {
+    e.preventDefault();
+    ask(question);
+  }
 
-      {/* Message history */}
-      <div id="chat-messages" style={{ marginBottom: 20 }}>
-        {messages.map((msg, i) => (
-          <div key={i} style={msg.role === "user" ? userBubble : assistantBubble}>
-            <p style={{ margin: 0, lineHeight: 1.7 }}>{msg.text}</p>
-            {msg.sources?.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                {msg.sources.map((src, j) => (
-                  <span key={j} style={sourceTag}>{src}</span>
+  return (
+    <section className="chat-section" data-testid="chat-panel">
+      <div className="chat-header">
+        <span className="chat-eyebrow">02 · conversation</span>
+      </div>
+      <h2 className="chat-headline">
+        Now ask anything <em>about your repo</em>
+      </h2>
+
+      {messages.length === 0 && (
+        <div className="chat-prompts" data-testid="chat-prompts">
+          {SUGGESTED.map((s, i) => (
+            <button
+              key={s.tag}
+              className="chat-prompt-chip"
+              onClick={() => ask(s.q)}
+              type="button"
+              data-testid={`chat-prompt-${s.tag}`}
+              disabled={loading}
+            >
+              <MessageSquareText size={11} style={{ marginRight: 6, verticalAlign: -1 }} />
+              {s.q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="chat-stream" data-testid="chat-stream">
+        {messages.map((m, i) => (
+          <div
+            key={i}
+            className={`msg msg-${m.role === "user" ? "user" : "system"}`}
+            data-testid={`msg-${m.role}-${i}`}
+          >
+            <div className="msg-meta">
+              <span className="role-pill">{m.role === "user" ? "you" : "repochat"}</span>
+            </div>
+            <div className="msg-bubble">
+              {m.role === "user" ? (
+                <p style={{ margin: 0 }}>{m.text}</p>
+              ) : (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+              )}
+            </div>
+            {m.sources?.length > 0 && (
+              <div className="msg-sources" data-testid={`msg-sources-${i}`}>
+                {m.sources.map((src) => (
+                  <a
+                    key={src}
+                    className="src-chip"
+                    href={fileUrl(repoMeta, src)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {src}
+                  </a>
                 ))}
               </div>
             )}
           </div>
         ))}
         {loading && (
-          <div style={{ color: "#8b949e", fontSize: 14, padding: "8px 0" }}>Thinking…</div>
+          <div className="thinking" data-testid="chat-thinking">
+            <span className="dot" /><span className="dot" /><span className="dot" />
+            <span style={{ marginLeft: 4 }}>reading the repo · composing answer</span>
+          </div>
         )}
+        <div ref={streamRef} />
       </div>
 
-      {/* Input */}
-      <form onSubmit={handleAsk} style={{ display: "flex", gap: 12 }}>
-        <input
-          id="chat-input"
-          type="text"
-          value={question}
-          onChange={e => setQuestion(e.target.value)}
-          placeholder="Ask anything about this repo…"
-          disabled={loading}
-          style={{
-            flex: 1,
-            padding: "12px 16px",
-            borderRadius: 8,
-            border: "1px solid #30363d",
-            background: "#161b22",
-            color: "#e6edf3",
-            fontSize: 14,
-            outline: "none",
-          }}
-        />
+      <form className="chat-form" onSubmit={handleSubmit} data-testid="chat-form">
+        <div className="chat-input-wrap">
+          <input
+            className="input"
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Ask: how does data flow? what does X do? what is unstable?"
+            disabled={loading}
+            data-testid="chat-input"
+          />
+        </div>
         <button
-          id="chat-send-btn"
+          className="btn btn-primary"
           type="submit"
           disabled={loading || !question.trim()}
-          style={{
-            padding: "12px 20px",
-            borderRadius: 8,
-            border: "none",
-            background: loading ? "#21262d" : "#1f6feb",
-            color: "#fff",
-            fontSize: 14,
-            cursor: loading ? "default" : "pointer",
-          }}
+          data-testid="chat-send-btn"
         >
-          Send
+          <Send size={14} /> Ask
         </button>
       </form>
 
       {error && (
-        <p id="chat-error" style={{ color: "#f85149", fontSize: 13, marginTop: 10 }}>{error}</p>
+        <p style={{ color: "var(--danger)", fontFamily: "var(--font-mono)", fontSize: 12, marginTop: 10 }} data-testid="chat-error">
+          {error}
+        </p>
       )}
-    </div>
+    </section>
   );
 }
-
-// ── inline styles ─────────────────────────────────────────────────────────────
-
-const userBubble = {
-  background: "#161b22",
-  border: "1px solid #30363d",
-  borderRadius: 8,
-  padding: "12px 16px",
-  marginBottom: 10,
-  color: "#e6edf3",
-  fontSize: 14,
-};
-
-const assistantBubble = {
-  background: "#0d1117",
-  border: "1px solid #1f6feb",
-  borderRadius: 8,
-  padding: "12px 16px",
-  marginBottom: 10,
-  color: "#c9d1d9",
-  fontSize: 14,
-};
-
-const sourceTag = {
-  display: "inline-block",
-  marginRight: 6,
-  fontSize: 11,
-  color: "#79c0ff",
-  background: "#0d2149",
-  borderRadius: 4,
-  padding: "2px 8px",
-  fontFamily: "monospace",
-};

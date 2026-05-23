@@ -1,11 +1,13 @@
 """
-main.py — FastAPI routes for Repochat.
+server.py — FastAPI app for Repochat.
+
+All routes are mounted under /api so they route correctly through
+the Emergent Kubernetes ingress (port 8001).
 
 Routes:
-  POST /index  — receive GitHub URL, run orchestrator, return real brief + session_id
-  POST /chat   — receive session_id + question, classify + answer via Gemini
-
-Phase 4: mocks replaced with real orchestrator calls.
+  POST /api/index  — receive GitHub URL, run orchestrator, return real brief + session_id
+  POST /api/chat   — receive session_id + question, classify + answer via LLM
+  GET  /api/health — liveness check
 """
 
 import os
@@ -13,47 +15,51 @@ import re
 import time
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 
-from logger import get_logger, log_endpoint
-from session import create_session, require_session
-import orchestrator
-
-# ── env & logger ───────────────────────────────────────────────────────────────
+# ── env (MUST load before importing anything that reads env) ──────────────────
 load_dotenv()
-log = get_logger("repochat.main")
+
+from logger import get_logger, log_endpoint  # noqa: E402
+from session import create_session, require_session  # noqa: E402
+import orchestrator  # noqa: E402
+
+log = get_logger("repochat.server")
 
 _GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-_GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
+_EMERGENT_KEY = os.getenv("EMERGENT_LLM_KEY", "")
 
 if not _GITHUB_TOKEN:
     log.warning("GITHUB_TOKEN not set — GitHub calls will fail")
-if not _GEMINI_KEY:
-    log.warning("GEMINI_API_KEY not set — Gemini calls will fail")
+if not _EMERGENT_KEY:
+    log.warning("EMERGENT_LLM_KEY not set — LLM calls will fail")
 
 # ── app ────────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Repochat API",
-    description="AI-powered GitHub repository intelligence",
-    version="0.4.0",
+    title="RepoChat API",
+    description="AI-powered GitHub repository comprehension layer",
+    version="0.5.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-log.info("Repochat API starting up")
+router = APIRouter(prefix="/api")
+
+log.info("RepoChat API starting up")
 
 
 # ── request models ─────────────────────────────────────────────────────────────
 
 _GITHUB_URL_RE = re.compile(
-    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(/.*)?$"
+    r"^https?://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s?#]+?)(?:\.git)?(?:/.*)?/?$"
 )
 
 
@@ -72,7 +78,7 @@ class IndexRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     session_id: str
-    question:   str
+    question: str
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -86,24 +92,25 @@ def _parse_owner_repo(url: str) -> tuple:
 
 # ── routes ─────────────────────────────────────────────────────────────────────
 
-@app.get("/health")
+@router.get("/health")
 async def health():
-    return {"status": "ok", "version": app.version}
+    return {
+        "status": "ok",
+        "version": app.version,
+        "github_token": "set" if _GITHUB_TOKEN else "missing",
+        "llm_key": "set" if _EMERGENT_KEY else "missing",
+    }
 
 
-@app.post("/index")
-@log_endpoint("POST /index")
+@router.post("/index")
+@log_endpoint("POST /api/index")
 async def index_repo(body: IndexRequest):
-    """
-    Receive a GitHub repo URL.
-    Runs Index Agent + Signal Agent in parallel, then generates a 4-section brief via Gemini.
-    """
+    """Run Index Agent + Signal Agent in parallel, then generate a 4-section brief via Claude."""
     t0 = time.perf_counter()
 
     try:
         owner, repo = _parse_owner_repo(body.url)
     except ValueError as exc:
-        log.api_error("POST /index", error=str(exc), url=body.url)
         raise HTTPException(status_code=422, detail=str(exc))
 
     log.info(f"Indexing {owner}/{repo}")
@@ -111,22 +118,27 @@ async def index_repo(body: IndexRequest):
 
     try:
         brief = await orchestrator.run(owner, repo, session_id)
+    except RuntimeError as exc:
+        log.api_error("POST /api/index", error=str(exc), session_id=session_id)
+        raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
-        log.api_error("POST /index", error=str(exc), session_id=session_id)
+        log.api_error("POST /api/index", error=str(exc), session_id=session_id)
         raise HTTPException(status_code=500, detail=f"Indexing failed: {exc}")
 
     duration_ms = (time.perf_counter() - t0) * 1000
-    log.api_success("POST /index", duration_ms=duration_ms, session_id=session_id)
+    log.api_success("POST /api/index", duration_ms=duration_ms, session_id=session_id)
 
-    return {"session_id": session_id, "brief": brief}
+    return {
+        "session_id": session_id,
+        "brief": brief,
+        "repo_meta": {"owner": owner, "repo": repo, "url": body.url},
+    }
 
 
-@app.post("/chat")
-@log_endpoint("POST /chat")
+@router.post("/chat")
+@log_endpoint("POST /api/chat")
 async def chat(body: ChatRequest):
-    """
-    Classify the question, pull relevant session context, call Gemini, return answer + sources.
-    """
+    """Classify question, pull session context, call Claude, return answer + sources."""
     t0 = time.perf_counter()
 
     try:
@@ -134,29 +146,33 @@ async def chat(body: ChatRequest):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
+    if not body.question.strip():
+        raise HTTPException(status_code=422, detail="Question cannot be empty")
+
     try:
-        result = await orchestrator.answer_question(body.session_id, body.question)
+        result = await orchestrator.answer_question(body.session_id, body.question.strip())
     except Exception as exc:
-        log.api_error("POST /chat", error=str(exc), session_id=body.session_id)
+        log.api_error("POST /api/chat", error=str(exc), session_id=body.session_id)
         raise HTTPException(status_code=500, detail=f"Chat failed: {exc}")
 
     duration_ms = (time.perf_counter() - t0) * 1000
-    log.api_success("POST /chat", duration_ms=duration_ms, session_id=body.session_id)
+    log.api_success("POST /api/chat", duration_ms=duration_ms, session_id=body.session_id)
 
     return result
 
 
-# ── startup / shutdown ──────────────────────────────────────────────────────────
+app.include_router(router)
+
 
 @app.on_event("startup")
 async def on_startup():
     log.info("=" * 60)
-    log.info("Repochat API ready (Phase 4 — real orchestrator)")
-    log.info(f"  GITHUB_TOKEN : {'SET' if _GITHUB_TOKEN else 'MISSING ⚠'}")
-    log.info(f"  GEMINI_KEY   : {'SET' if _GEMINI_KEY   else 'MISSING ⚠'}")
+    log.info(f"RepoChat API ready (v{app.version} — Phase 5)")
+    log.info(f"  GITHUB_TOKEN     : {'SET' if _GITHUB_TOKEN else 'MISSING'}")
+    log.info(f"  EMERGENT_LLM_KEY : {'SET' if _EMERGENT_KEY else 'MISSING'}")
     log.info("=" * 60)
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    log.info("Repochat API shutting down")
+    log.info("RepoChat API shutting down")

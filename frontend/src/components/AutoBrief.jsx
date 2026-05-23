@@ -1,106 +1,177 @@
 /**
  * AutoBrief.jsx — 4-section repository brief.
  *
- * Phase 1 stub: renders mock data from /index response.
- * Full design and styling implemented in Phase 5.
- *
  * Sections (from session_store.brief):
- *   1. architecture   — narrative summary
+ *   1. architecture   — narrative summary (editorial)
  *   2. core_modules   — top files with role + badge
- *   3. hidden_signals — insight cards (violations, churn, todos)
+ *   3. hidden_signals — insight cards; violation gets a "wow banner"
  *   4. unused_data    — stale fields
+ *
+ * THIS IS THE PRIMARY VIEW. It always renders above Chat.
  */
 
-export default function AutoBrief({ brief }) {
+import { useMemo } from "react";
+import { Layers, Boxes, Search, Trash2, AlertTriangle, GitCommit, ClipboardList, ExternalLink } from "lucide-react";
+import { fileUrl } from "../lib/api.js";
+
+function badgeClassFor(badge) {
+  if (!badge) return "badge";
+  const slug = String(badge).toLowerCase().replace(/[^a-z]/g, "");
+  return `badge badge-${slug}`;
+}
+
+function signalIcon(type) {
+  if (type === "violation") return <AlertTriangle size={11} />;
+  if (type === "churn")     return <GitCommit size={11} />;
+  if (type === "todo")      return <ClipboardList size={11} />;
+  return <Search size={11} />;
+}
+
+export default function AutoBrief({ brief, repoMeta }) {
   if (!brief) return null;
 
+  const violationSignal = useMemo(
+    () => (brief.hidden_signals || []).find((s) => s.type === "violation"),
+    [brief]
+  );
+  const otherSignals = useMemo(
+    () => (brief.hidden_signals || []).filter((s) => s !== violationSignal),
+    [brief, violationSignal]
+  );
+
   return (
-    <div id="auto-brief" style={{ marginBottom: 40 }}>
-      <h2 style={{ fontSize: 22, color: "#e6edf3", marginBottom: 24 }}>Repository Brief</h2>
+    <div data-testid="auto-brief">
+      {/* Repo meta header */}
+      <div className="brief-meta">
+        <div>
+          <h1 className="brief-repo-name" data-testid="brief-repo-name">
+            <span className="owner">{repoMeta?.owner}/</span>{repoMeta?.repo}
+          </h1>
+          {repoMeta?.url && (
+            <a
+              className="brief-repo-url"
+              href={repoMeta.url}
+              target="_blank"
+              rel="noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 6, textDecoration: "none" }}
+            >
+              {repoMeta.url} <ExternalLink size={11} />
+            </a>
+          )}
+        </div>
+        <div className="eyebrow" style={{ textAlign: "right" }}>
+          auto-brief<br />
+          <span style={{ color: "var(--accent)" }}>generated · {new Date().toLocaleTimeString()}</span>
+        </div>
+      </div>
 
       {/* Section 1 — Architecture */}
-      <section id="brief-architecture" style={sectionStyle}>
-        <h3 style={sectionTitle}>🏗 Architecture</h3>
-        <p style={{ color: "#8b949e", lineHeight: 1.7 }}>{brief.architecture}</p>
+      <section className="section" data-testid="brief-architecture" style={{ animationDelay: "0ms" }}>
+        <h2 className="section-title">
+          <span className="num">01</span>
+          <Layers size={18} style={{ color: "var(--accent)" }} />
+          <span>The <em>architecture</em>, in one breath</span>
+        </h2>
+        <div className="card">
+          <p className="arch-text" data-testid="brief-architecture-text">{brief.architecture}</p>
+        </div>
       </section>
 
       {/* Section 2 — Core Modules */}
-      <section id="brief-core-modules" style={sectionStyle}>
-        <h3 style={sectionTitle}>📦 Core Modules</h3>
-        {brief.core_modules?.map((mod, i) => (
-          <div key={i} style={rowStyle}>
-            <span style={{ color: "#79c0ff", fontFamily: "monospace" }}>{mod.file}</span>
-            <span style={{ color: "#8b949e", marginLeft: 12 }}>{mod.role}</span>
-            <span style={badgeStyle}>{mod.badge}</span>
-          </div>
-        ))}
+      <section className="section" data-testid="brief-core-modules" style={{ animationDelay: "80ms" }}>
+        <h2 className="section-title">
+          <span className="num">02</span>
+          <Boxes size={18} style={{ color: "var(--violet)" }} />
+          <span>The files that <em>actually matter</em></span>
+        </h2>
+
+        <div className="modules-grid">
+          {(brief.core_modules || []).map((mod, i) => (
+            <a
+              key={`${mod.file}-${i}`}
+              className="module-row"
+              href={fileUrl(repoMeta, mod.file)}
+              target="_blank"
+              rel="noreferrer"
+              style={{ textDecoration: "none", color: "inherit" }}
+              data-testid={`module-row-${i}`}
+            >
+              <span className="module-rank">{String(i + 1).padStart(2, "0")}</span>
+              <div className="module-main">
+                <span className="module-file">{mod.file}</span>
+                <span className="module-role">{mod.role}</span>
+              </div>
+              <span className={badgeClassFor(mod.badge)}>{mod.badge || "Module"}</span>
+            </a>
+          ))}
+          {(!brief.core_modules || brief.core_modules.length === 0) && (
+            <div className="empty">no source modules detected</div>
+          )}
+        </div>
       </section>
 
-      {/* Section 3 — Hidden Signals */}
-      <section id="brief-hidden-signals" style={sectionStyle}>
-        <h3 style={sectionTitle}>🔍 Hidden Signals</h3>
-        {brief.hidden_signals?.map((sig, i) => (
-          <div key={i} style={cardStyle}>
-            <strong style={{ color: "#f0883e" }}>{sig.title}</strong>
-            <p style={{ margin: "6px 0 0", color: "#8b949e", fontSize: 14, lineHeight: 1.6 }}>{sig.detail}</p>
-            <span style={{ fontSize: 12, color: "#484f58" }}>Source: {sig.source}</span>
+      {/* Section 3 — Hidden Signals (violation = wow banner) */}
+      <section className="section" data-testid="brief-hidden-signals" style={{ animationDelay: "160ms" }}>
+        <h2 className="section-title">
+          <span className="num">03</span>
+          <Search size={18} style={{ color: "var(--gold)" }} />
+          <span>Hidden <em>signals</em> nobody told you about</span>
+        </h2>
+
+        {violationSignal && (
+          <div className="wow-banner" data-testid="wow-violation">
+            <span className="wow-tag">
+              <AlertTriangle size={11} /> Architectural outlier
+            </span>
+            <p className="wow-text">{violationSignal.detail || violationSignal.title}</p>
+            {violationSignal.source && (
+              <div className="wow-source">source · {violationSignal.source}</div>
+            )}
           </div>
-        ))}
+        )}
+
+        <div className="signals-grid">
+          {otherSignals.map((sig, i) => (
+            <div
+              key={`${sig.title}-${i}`}
+              className={`signal-card type-${sig.type || "info"}`}
+              data-testid={`signal-card-${i}`}
+            >
+              <span className="signal-type">
+                {signalIcon(sig.type)} {sig.type || "signal"}
+              </span>
+              <h3 className="signal-title">{sig.title}</h3>
+              <p className="signal-detail">{sig.detail}</p>
+              {sig.source && <span className="signal-source">· {sig.source}</span>}
+            </div>
+          ))}
+          {otherSignals.length === 0 && !violationSignal && (
+            <div className="empty">no hidden signals detected — this codebase is unusually clean.</div>
+          )}
+        </div>
       </section>
 
       {/* Section 4 — Unused Data */}
-      <section id="brief-unused-data" style={sectionStyle}>
-        <h3 style={sectionTitle}>🗑 Unused Data</h3>
-        {brief.unused_data?.map((item, i) => (
-          <div key={i} style={rowStyle}>
-            <span style={{ color: "#d2a8ff", fontFamily: "monospace" }}>{item.field}</span>
-            <span style={{ color: "#8b949e", marginLeft: 12 }}>{item.note}</span>
-            <span style={badgeStyle}>{item.tag}</span>
-          </div>
-        ))}
+      <section className="section" data-testid="brief-unused-data" style={{ animationDelay: "240ms" }}>
+        <h2 className="section-title">
+          <span className="num">04</span>
+          <Trash2 size={18} style={{ color: "var(--danger)" }} />
+          <span>Data defined but <em>never used</em></span>
+        </h2>
+
+        <div className="unused-list">
+          {(brief.unused_data || []).map((item, i) => (
+            <div className="unused-row" key={`${item.field}-${i}`} data-testid={`unused-row-${i}`}>
+              <span className="unused-field">{item.field}</span>
+              <span className="unused-note">{item.note}</span>
+              <span className={badgeClassFor(item.tag)}>{item.tag || "Stale"}</span>
+            </div>
+          ))}
+          {(!brief.unused_data || brief.unused_data.length === 0) && (
+            <div className="empty">no orphaned fields found.</div>
+          )}
+        </div>
       </section>
     </div>
   );
 }
-
-// ── inline styles (replaced with proper CSS in Phase 5) ──────────────────────
-
-const sectionStyle = {
-  background: "#161b22",
-  border: "1px solid #30363d",
-  borderRadius: 8,
-  padding: "20px 24px",
-  marginBottom: 16,
-};
-
-const sectionTitle = {
-  fontSize: 15,
-  fontWeight: 600,
-  color: "#e6edf3",
-  marginTop: 0,
-  marginBottom: 16,
-};
-
-const rowStyle = {
-  display: "flex",
-  alignItems: "center",
-  padding: "6px 0",
-  borderBottom: "1px solid #21262d",
-};
-
-const cardStyle = {
-  background: "#0d1117",
-  border: "1px solid #30363d",
-  borderRadius: 6,
-  padding: "12px 16px",
-  marginBottom: 10,
-};
-
-const badgeStyle = {
-  marginLeft: "auto",
-  fontSize: 12,
-  color: "#7ee787",
-  background: "#1a2f23",
-  borderRadius: 4,
-  padding: "2px 8px",
-};
