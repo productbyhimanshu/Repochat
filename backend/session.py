@@ -29,6 +29,8 @@ def create_session(owner: str, repo: str, url: str) -> str:
             "repo":      repo,
             "url":       url,
             "timestamp": time.time(),
+            "default_branch": "main",
+            "total_files": 0,
         },
 
         # ── raw file content cache — never fetch same file twice ───────────

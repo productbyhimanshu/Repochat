@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { ArrowRight, Github, AlertCircle } from "lucide-react";
+import StatsCounter from "./StatsCounter.jsx";
 
 const EXAMPLES = [
   "https://github.com/expressjs/express",
@@ -35,15 +36,18 @@ export default function UrlInput({ onSubmit, error }) {
             <span className="brand-mark">repo<em>chat</em></span>
             <span className="brand-tag">comprehension layer</span>
           </div>
-          <a
-            className="brand-tag"
-            href="https://github.com/productbyhimanshu/Repochat"
-            target="_blank"
-            rel="noreferrer"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
-          >
-            <Github size={13} /> on github
-          </a>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <StatsCounter />
+            <a
+              className="brand-tag"
+              href="https://github.com/productbyhimanshu/Repochat"
+              target="_blank"
+              rel="noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+            >
+              <Github size={13} /> on github
+            </a>
+          </div>
         </header>
 
         <div className="landing-body">

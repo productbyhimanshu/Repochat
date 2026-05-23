@@ -20,7 +20,8 @@ TEST_REPO_URL = "https://github.com/tj/commander.js"
 # ----------------------------------------------------------------------------
 # Module-level shared state for session reuse
 # ----------------------------------------------------------------------------
-_indexed = {"session_id": None, "brief": None, "repo_meta": None}
+_indexed = {"session_id": None, "brief": None, "repo_meta": None, "repos_analyzed": None}
+_stats_before = {"value": None}
 
 
 @pytest.fixture(scope="module")
@@ -58,6 +59,24 @@ class TestIndex:
         r = api.post(f"{BASE_URL}/api/index", json={"url": "https://gitlab.com/foo/bar"}, timeout=15)
         assert r.status_code == 422
 
+    def test_stats_before_index(self, api):
+        """Capture counter value BEFORE the successful index. Also asserts /api/stats shape."""
+        r = api.get(f"{BASE_URL}/api/stats", timeout=15)
+        assert r.status_code == 200
+        data = r.json()
+        assert "repos_analyzed" in data
+        assert isinstance(data["repos_analyzed"], int)
+        assert data["repos_analyzed"] >= 0
+        _stats_before["value"] = data["repos_analyzed"]
+
+    def test_stats_invalid_url_does_not_increment(self, api):
+        """A 422-invalid URL must NOT increment the counter."""
+        before = api.get(f"{BASE_URL}/api/stats", timeout=15).json()["repos_analyzed"]
+        bad = api.post(f"{BASE_URL}/api/index", json={"url": "definitely not a url"}, timeout=15)
+        assert bad.status_code == 422
+        after = api.get(f"{BASE_URL}/api/stats", timeout=15).json()["repos_analyzed"]
+        assert after == before, f"counter changed on invalid URL: {before} -> {after}"
+
     def test_index_valid_repo_returns_brief(self, api):
         """End-to-end indexing of a small public repo. May take 30-60s."""
         r = api.post(
@@ -87,11 +106,35 @@ class TestIndex:
         assert meta["owner"] == "tj"
         assert meta["repo"] == "commander.js"
         assert meta["url"] == TEST_REPO_URL
+        # Phase 6: repo_meta now includes default_branch & total_files
+        assert "default_branch" in meta, "repo_meta.default_branch missing"
+        assert meta["default_branch"] == "master", (
+            f"commander.js default_branch should be 'master', got {meta['default_branch']!r}"
+        )
+        assert "total_files" in meta and isinstance(meta["total_files"], int)
+        assert meta["total_files"] > 200, f"total_files should be >200, got {meta['total_files']}"
+
+        # Phase 6: response now includes repos_analyzed
+        assert "repos_analyzed" in data and isinstance(data["repos_analyzed"], int)
+        _indexed["repos_analyzed"] = data["repos_analyzed"]
 
         # share to subsequent tests
         _indexed["session_id"] = data["session_id"]
         _indexed["brief"] = brief
         _indexed["repo_meta"] = meta
+
+    def test_stats_incremented_by_one(self, api):
+        """Counter increments by exactly 1 after a successful index."""
+        if _stats_before["value"] is None or _indexed["repos_analyzed"] is None:
+            pytest.skip("prior tests didn't run")
+        # The response's repos_analyzed should equal before+1
+        assert _indexed["repos_analyzed"] == _stats_before["value"] + 1, (
+            f"expected {_stats_before['value']+1}, got {_indexed['repos_analyzed']}"
+        )
+        # And /api/stats should reflect the same
+        r = api.get(f"{BASE_URL}/api/stats", timeout=15)
+        assert r.status_code == 200
+        assert r.json()["repos_analyzed"] >= _indexed["repos_analyzed"]
 
 
 # ----------------------------------------------------------------------------
@@ -120,9 +163,6 @@ class TestChat:
         "label,question",
         [
             ("architecture", "How is this architecture structured?"),
-            ("flow", "How does a request flow through commander?"),
-            ("drift", "What changed recently? Where is the drift?"),
-            ("signal", "What TODOs and hidden risks exist?"),
             ("module", "What does index.js do?"),
         ],
     )

@@ -55,7 +55,10 @@ def _get_cache(session_id: str) -> dict:
 # ── 5 GitHub client functions ──────────────────────────────────────────────────
 
 async def get_file_tree(session_id: str, owner: str, repo: str) -> list:
-    """Return list of all blob paths in the repo (recursive)."""
+    """Return list of all blob paths in the repo (recursive).
+
+    Also writes `default_branch` to session_store.repo_meta on the first call.
+    """
     cache = _get_cache(session_id)
     cache_key = f"tree:{owner}/{repo}"
 
@@ -69,7 +72,13 @@ async def get_file_tree(session_id: str, owner: str, repo: str) -> list:
     async with httpx.AsyncClient(timeout=30) as client:
         repo_res = await _get(client, f"{_BASE}/repos/{owner}/{repo}")
         repo_res.raise_for_status()
-        default_branch = repo_res.json().get("default_branch", "main")
+        repo_data = repo_res.json()
+        default_branch = repo_data.get("default_branch", "main")
+
+        # Persist default_branch to session repo_meta so the frontend can
+        # build correct file URLs.
+        store = require_session(session_id)
+        store["repo_meta"]["default_branch"] = default_branch
 
         tree_res = await _get(
             client,

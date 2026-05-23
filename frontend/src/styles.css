@@ -907,3 +907,24 @@ body::before {
   transition: color 160ms ease;
 }
 .reset-link:hover { color: var(--accent); }
+
+/* ── Stats counter chip ──────────────────────────────────────────────────── */
+.stats-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid transparent;
+  animation: fadeIn 600ms ease both;
+}
+.stats-chip strong {
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}

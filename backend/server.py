@@ -1,18 +1,19 @@
 """
-server.py — FastAPI app for Repochat.
+server.py — FastAPI app for RepoChat (Phase 6).
 
-All routes are mounted under /api so they route correctly through
-the Emergent Kubernetes ingress (port 8001).
+All routes mounted under /api so they route through the Emergent ingress.
 
 Routes:
-  POST /api/index  — receive GitHub URL, run orchestrator, return real brief + session_id
-  POST /api/chat   — receive session_id + question, classify + answer via LLM
-  GET  /api/health — liveness check
+  POST /api/index   — receive GitHub URL, run orchestrator, return brief + session_id
+  POST /api/chat    — receive session_id + question, classify + answer via Claude
+  GET  /api/health  — liveness
+  GET  /api/stats   — total repos analyzed (for landing-page counter)
 """
 
 import os
 import re
 import time
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, APIRouter
@@ -25,6 +26,7 @@ load_dotenv()
 from logger import get_logger, log_endpoint  # noqa: E402
 from session import create_session, require_session  # noqa: E402
 import orchestrator  # noqa: E402
+import stats  # noqa: E402
 
 log = get_logger("repochat.server")
 
@@ -36,11 +38,28 @@ if not _GITHUB_TOKEN:
 if not _EMERGENT_KEY:
     log.warning("EMERGENT_LLM_KEY not set — LLM calls will fail")
 
+
+# ── lifespan ──────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("=" * 60)
+    log.info(f"RepoChat API ready (v{app.version} — Phase 6)")
+    log.info(f"  GITHUB_TOKEN     : {'SET' if _GITHUB_TOKEN else 'MISSING'}")
+    log.info(f"  EMERGENT_LLM_KEY : {'SET' if _EMERGENT_KEY else 'MISSING'}")
+    log.info(f"  repos_analyzed   : {stats.get_count()}")
+    log.info("=" * 60)
+    yield
+    log.info("RepoChat API shutting down")
+
+
 # ── app ────────────────────────────────────────────────────────────────────────
+
 app = FastAPI(
     title="RepoChat API",
     description="AI-powered GitHub repository comprehension layer",
-    version="0.5.0",
+    version="0.6.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -102,6 +121,11 @@ async def health():
     }
 
 
+@router.get("/stats")
+async def get_stats():
+    return {"repos_analyzed": stats.get_count()}
+
+
 @router.post("/index")
 @log_endpoint("POST /api/index")
 async def index_repo(body: IndexRequest):
@@ -125,13 +149,30 @@ async def index_repo(body: IndexRequest):
         log.api_error("POST /api/index", error=str(exc), session_id=session_id)
         raise HTTPException(status_code=500, detail=f"Indexing failed: {exc}")
 
+    # Counter increment is non-blocking & best-effort
+    try:
+        new_count = stats.increment()
+    except Exception as exc:
+        log.warning(f"counter increment failed: {exc}")
+        new_count = stats.get_count()
+
+    store = require_session(session_id)
+    repo_meta = store.get("repo_meta", {})
+
     duration_ms = (time.perf_counter() - t0) * 1000
     log.api_success("POST /api/index", duration_ms=duration_ms, session_id=session_id)
 
     return {
         "session_id": session_id,
         "brief": brief,
-        "repo_meta": {"owner": owner, "repo": repo, "url": body.url},
+        "repo_meta": {
+            "owner":          repo_meta.get("owner", owner),
+            "repo":           repo_meta.get("repo", repo),
+            "url":            repo_meta.get("url", body.url),
+            "default_branch": repo_meta.get("default_branch", "main"),
+            "total_files":    repo_meta.get("total_files", 0),
+        },
+        "repos_analyzed": new_count,
     }
 
 
@@ -162,17 +203,3 @@ async def chat(body: ChatRequest):
 
 
 app.include_router(router)
-
-
-@app.on_event("startup")
-async def on_startup():
-    log.info("=" * 60)
-    log.info(f"RepoChat API ready (v{app.version} — Phase 5)")
-    log.info(f"  GITHUB_TOKEN     : {'SET' if _GITHUB_TOKEN else 'MISSING'}")
-    log.info(f"  EMERGENT_LLM_KEY : {'SET' if _EMERGENT_KEY else 'MISSING'}")
-    log.info("=" * 60)
-
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    log.info("RepoChat API shutting down")

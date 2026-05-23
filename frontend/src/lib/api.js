@@ -32,16 +32,25 @@ async function postJSON(path, body) {
   return res.json();
 }
 
+async function getJSON(path) {
+  const res = await fetch(`${BASE}${path}`);
+  if (!res.ok) {
+    const err = new Error(`Server error ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 export const api = {
-  index: (url) => postJSON("/api/index", { url }),
-  chat:  (session_id, question) => postJSON("/api/chat", { session_id, question }),
-  health: async () => {
-    const r = await fetch(`${BASE}/api/health`);
-    return r.json();
-  },
+  index:  (url) => postJSON("/api/index", { url }),
+  chat:   (session_id, question) => postJSON("/api/chat", { session_id, question }),
+  stats:  () => getJSON("/api/stats"),
+  health: () => getJSON("/api/health"),
 };
 
 export function fileUrl(repoMeta, path) {
   if (!repoMeta || !path) return null;
-  return `https://github.com/${repoMeta.owner}/${repoMeta.repo}/blob/HEAD/${path}`;
+  const branch = repoMeta.default_branch || "HEAD";
+  return `https://github.com/${repoMeta.owner}/${repoMeta.repo}/blob/${branch}/${path}`;
 }

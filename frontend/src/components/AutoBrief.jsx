@@ -13,6 +13,7 @@
 import { useMemo } from "react";
 import { Layers, Boxes, Search, Trash2, AlertTriangle, GitCommit, ClipboardList, ExternalLink } from "lucide-react";
 import { fileUrl } from "../lib/api.js";
+import RepoSizeBanner from "./RepoSizeBanner.jsx";
 
 function badgeClassFor(badge) {
   if (!badge) return "badge";
@@ -64,6 +65,9 @@ export default function AutoBrief({ brief, repoMeta }) {
           <span style={{ color: "var(--accent)" }}>generated · {new Date().toLocaleTimeString()}</span>
         </div>
       </div>
+
+      {/* Optional warning for very large repos */}
+      <RepoSizeBanner totalFiles={repoMeta?.total_files} />
 
       {/* Section 1 — Architecture */}
       <section className="section" data-testid="brief-architecture" style={{ animationDelay: "0ms" }}>

@@ -37,7 +37,10 @@ async def run(owner: str, repo: str, session_id: str) -> None:
     # 1. File tree
     tree = await get_file_tree(session_id, owner, repo)
     source_files = [f for f in tree if _is_source_file(f)][:40]
-    log.agent("index_agent", f"Found {len(source_files)} source files")
+    log.agent("index_agent", f"Found {len(source_files)} source files (total tree={len(tree)})")
+
+    # Persist total tree size so the frontend can warn on huge repos
+    store["repo_meta"]["total_files"] = len(tree)
 
     # 2. Fetch contents in parallel
     async def _fetch(path: str) -> tuple:
