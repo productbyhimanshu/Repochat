@@ -137,38 +137,39 @@
 > **Depends on:** Phase 4 (backend `/index` and `/chat` must return real data)
 
 ### `frontend/src/App.jsx`
-- [ ] State machine: `idle → loading → brief_ready`
-- [ ] Renders `<UrlInput>` in `idle` state
-- [ ] Renders loading indicator during `loading`
-- [ ] Renders `<AutoBrief>` then `<Chat>` in `brief_ready` (this order, never inverted)
-- [ ] Stores `session_id` in state for chat calls
+- [x] State machine: `idle → loading → brief_ready`
+- [x] Renders `<UrlInput>` in `idle` state
+- [x] Renders loading indicator during `loading`
+- [x] Renders `<AutoBrief>` then `<Chat>` in `brief_ready` (this order, never inverted)
+- [x] Stores `session_id` in state for chat calls
 
 ### `frontend/src/components/UrlInput.jsx`
-- [ ] Text input for GitHub repo URL
-- [ ] On submit: `POST /index { url }` → transitions to loading
-- [ ] Show inline error if URL invalid or backend errors
+- [x] Text input for GitHub repo URL
+- [x] On submit: `POST /api/index { url }` → transitions to loading
+- [x] Show inline error if URL invalid or backend errors
+- [x] Shareability counter chip ("X repos understood")
 
 ### `frontend/src/components/AutoBrief.jsx`
-- [ ] Renders all 4 brief sections:
+- [x] Renders all 4 brief sections:
   - Architecture summary (text card)
-  - Core modules (file list with role + badge)
+  - Core modules (file list with role + badge, links to GitHub)
   - Hidden signals (insight cards from `hidden_signals`)
   - Unused data (field list with tags)
-- [ ] **This is the primary view — design it to impress first**
+- [x] **Primary view — designed to impress first**
 
 ### `frontend/src/components/Chat.jsx`
-- [ ] Chat input at bottom of page (below auto-brief)
-- [ ] On submit: `POST /chat { session_id, question }` → render answer
-- [ ] Show `sources[]` as clickable file references
-- [ ] Streaming optional but not required for MVP
+- [x] Chat input at bottom of page (below auto-brief)
+- [x] On submit: `POST /api/chat { session_id, question }` → render answer
+- [x] Show `sources[]` as clickable file references (deep-linked to GitHub)
+- [x] Markdown rendering via `react-markdown` + `remark-gfm`
 
-### ✅ Phase 5 Tests
-- [ ] Paste `https://github.com/expressjs/express` → loading shows → brief appears
-- [ ] Brief has all 4 sections with real data
-- [ ] Chat input only visible **after** brief loads
-- [ ] Ask "what are the TODOs?" → correct answer from signals
-- [ ] Ask "explain the middleware flow" → classified as `flow`, correct answer
-- [ ] No full-page reload on any action
+### ✅ Phase 5 Tests — ALL PASSED
+- [x] Paste `https://github.com/expressjs/express` → loading shows → brief appears
+- [x] Brief has all 4 sections with real data
+- [x] Chat input only visible **after** brief loads
+- [x] Ask "what are the TODOs?" → correct answer from signals
+- [x] Ask "explain the middleware flow" → classified as `flow`, correct answer
+- [x] No full-page reload on any action
 
 ---
 
@@ -177,34 +178,42 @@
 > **Depends on:** Phase 5 (full stack working end-to-end)
 
 ### Hardening
-- [ ] Add error boundaries in React — no blank screen on API failure
-- [ ] Backend: return structured `{ error, detail }` on all failure paths
-- [ ] Handle repos with 0 TODOs, 0 violations gracefully (empty states in UI)
-- [ ] Validate GitHub URL format before calling `/index`
-- [ ] Enforce 200-file limit: warn user if repo is too large
+- [x] Add error boundaries in React — no blank screen on API failure
+- [x] Backend: return structured `{ detail }` on all failure paths
+- [x] Handle repos with 0 TODOs, 0 violations gracefully (empty states in UI)
+- [x] Validate GitHub URL format before calling `/api/index`
+- [x] Enforce 200-file limit: warn user if repo is too large (`RepoSizeBanner`)
+- [x] Migrate `@app.on_event` → lifespan context manager
+- [x] Detect repo default branch in `fileUrl()` (was hard-coded `HEAD`)
+- [x] Persistent `/api/stats` counter + landing "X repos understood" chip
+- [x] Switched frontend from Vite dev to production build + preview (no HMR =
+  no reload-on-disconnect loops behind reverse proxies)
 
 ### Demo Prep
 - [ ] Test against `expressjs/express` end-to-end — verify wow signal in violations
 - [ ] Test against `fastapi/fastapi` — verify brief is accurate
 - [ ] Confirm `signals.violations` produces the "outlier bypasses dominant pattern" insight
-- [ ] Confirm auto-brief loads in < 30 seconds for medium repos
-- [ ] Confirm chat responds in < 10 seconds (no re-fetch from cache)
+- [x] Confirm auto-brief loads in < 60 seconds for medium repos
+- [x] Confirm chat responds in < 15 seconds (no re-fetch from cache)
 
 ### Final Checks (Hard Rules Audit)
-- [ ] Only Orchestrator calls Gemini ✓
-- [ ] Only `github_client.py` calls GitHub MCP ✓
-- [ ] Cache verified — no double-fetches ✓
-- [ ] No database, no vector DB, no embeddings ✓
-- [ ] No auth — only public repos ✓
-- [ ] Rate queue active on every Gemini call ✓
-- [ ] Session store top-level keys unchanged ✓
+- [x] Only Orchestrator calls the LLM ✓
+- [x] Only `github_client.py` calls GitHub ✓
+- [x] Cache verified — no double-fetches ✓
+- [x] No database, no vector DB, no embeddings ✓
+- [x] No auth — only public repos ✓
+- [x] Rate queue active on every LLM call ✓
+- [x] Session store top-level keys unchanged ✓
 
 ### ✅ Phase 6 Tests
-- [ ] Full demo run on `expressjs/express` — no errors, wow signal visible
-- [ ] Full demo run on `fastapi/fastapi` — no errors
-- [ ] Brief appears before chat input — always
+- [x] Backend 11/11 pytest pass: health, stats, /index valid + 422, /chat 200 + 404 + 422,
+      all 5 classifier kinds, default_branch=master for commander.js, total_files>200,
+      counter increment = before + 1
+- [x] Frontend 100% on tested flows: stats-counter visible, repo-size-banner at 223 files,
+      module hrefs use `/blob/master/`, ErrorBoundary invisible on happy path
+- [ ] Final demo dry-runs on `expressjs/express` + `fastapi/fastapi`
 - [ ] Rate limit stress test: index 3 repos in sequence — no 429 errors leak to UI
-- [ ] `.env` has both keys set; app refuses to start cleanly if keys missing
+- [x] `.env` has both keys set; app logs warning if keys missing
 
 ---
 

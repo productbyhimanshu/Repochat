@@ -270,24 +270,36 @@ Avoid anything over 200 files. Demo clarity beats technical complexity.
 ```
 Status: [ ] not started  [ ] in progress  [x] done
 
-[ ] FastAPI skeleton — main.py, /index and /chat routes, mock returns
-[ ] Session store — session.py with exact shape above
-[ ] GitHub MCP client — github_client.py, all 5 tool calls
-[ ] Rate queue — rate_queue.py, 15 RPM guard
-[ ] Gemini client — gemini_client.py, single call wrapper
-[ ] Index Agent — index_agent.py
-[ ] Signal Agent — signal_agent.py, including violations signal
-[ ] Orchestrator — orchestrator.py, question classifier included
-[ ] Auto-brief assembly — 4 sections from session_store.brief
-[ ] React URL input — UrlInput.jsx
-[ ] React auto-brief — AutoBrief.jsx
-[ ] React chat — Chat.jsx
+[x] FastAPI skeleton — server.py, /api/index and /api/chat routes
+[x] Session store — session.py with exact shape
+[x] GitHub client — github_client.py (REST), all 5 tool calls, cached
+[x] Rate queue — rate_queue.py, 15 RPM guard
+[x] LLM client — llm_client.py (Claude Sonnet 4.5 via Emergent Universal Key)
+[x] Index Agent — index_agent.py
+[x] Signal Agent — signal_agent.py, including violations signal
+[x] Orchestrator — orchestrator.py, question classifier included
+[x] Auto-brief assembly — 4 sections from session_store.brief
+[x] React URL input — UrlInput.jsx
+[x] React auto-brief — AutoBrief.jsx
+[x] React chat — Chat.jsx
+[x] Phase 6 polish — ErrorBoundary, RepoSizeBanner (>200 files), default-branch detection
+[x] Counter — /api/stats + persistent JSON counter + landing chip
+[x] Lifespan ctx manager replacing deprecated @app.on_event
+[x] Production build served by `yarn start` (no HMR — avoids reload-on-disconnect loops behind reverse proxies)
 ```
 
-**In progress:** nothing — project start
+**LLM provider:** Claude Sonnet 4.5 (`anthropic/claude-sonnet-4-5-20250929`) via
+the Emergent Universal Key — replacing Gemini 2.0 Flash Lite in earlier phases.
 
-**Last decision:** incorporated reviewer feedback — session store structured, question classifier added, architectural violations signal added to Signal Agent
+**In progress:** nothing — Phase 6 polish complete.
 
-**Next task:** create backend/main.py with FastAPI skeleton, /index and /chat routes returning hardcoded mock JSON
+**Last decision:** switched frontend from Vite dev server to a production build
++ `vite preview` to eliminate HMR-WebSocket-driven reload loops when served
+behind a reverse proxy / K8s ingress.
 
-**Do not touch:** nothing locked yet — first session
+**Next task:** demo dry-runs against `expressjs/express` and `fastapi/fastapi`
+to verify the "outlier bypasses dominant pattern" wow violation surfaces.
+
+**Do not touch:** session_store top-level keys, the "only Orchestrator calls
+the LLM" rule, the "only github_client calls GitHub" rule, the UI order
+(URL input → loading → AutoBrief → Chat).
